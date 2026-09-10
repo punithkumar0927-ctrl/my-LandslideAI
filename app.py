@@ -4,21 +4,23 @@ import joblib
 import os
 from datetime import datetime
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 app = Flask(
     __name__,
-    template_folder=os.path.join("model", "templates"),
-    static_folder=os.path.join("model", "templates", "static"),
+    template_folder=BASE_DIR,
+    static_folder=BASE_DIR,
 )
 
-MODEL_PATH = os.path.join("model", "landslide_model.pkl")
-LEGACY_MODEL_PATH = os.path.join("model", "landslide_model.pk1")
+MODEL_PATH = os.path.join(BASE_DIR, "landslide_model.pkl")
+LEGACY_MODEL_PATH = os.path.join(BASE_DIR, "landslide_model.pk1")
 
 if not os.path.exists(MODEL_PATH) and os.path.exists(LEGACY_MODEL_PATH):
     MODEL_PATH = LEGACY_MODEL_PATH
 
 model = joblib.load(MODEL_PATH)
 
-DATABASE = "landslide.db"
+DATABASE = os.path.join(BASE_DIR, "landslide.db")
 
 # -----------------------------------------
 # Database
@@ -499,8 +501,8 @@ if __name__ == "__main__":
     create_database()
 
     app.run(
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=5000,
-        debug=True
+        debug=False
     )
 
