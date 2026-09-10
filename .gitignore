@@ -1,0 +1,25 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python virtualenv
+venv/
+.env/
+
+# SQLite DB
+landslide.db
+
+# Model files (keep the main .pkl)
+model/*.pk1
+
+# VSCode
+.vscode/
