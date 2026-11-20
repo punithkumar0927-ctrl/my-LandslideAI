@@ -150,8 +150,6 @@ python app.py
 
 Navigate to:
 https://my-landslide-ai-cuqg.vercel.app/
-
-
 ---
 
 ## 🌐 API Endpoints Reference
