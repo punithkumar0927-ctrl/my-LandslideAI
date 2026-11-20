@@ -213,11 +213,9 @@ function validatePredictionInputs() {
 function updateRiskVisuals(risk, score, confidence) {
   const riskColor = getRiskColor(risk);
   const riskBadge = document.getElementById("risk-badge");
-  const predictionBadge = document.getElementById("prediction-risk-badge");
   const riskMeter = document.getElementById("risk-meter");
 
   if (riskBadge) setRiskBadge(risk, "risk-badge");
-  if (predictionBadge) setRiskBadge(risk, "prediction-risk-badge");
 
   const riskValue = document.getElementById("risk-score");
   const currentConfidence = document.getElementById("confidence");
@@ -230,11 +228,16 @@ function updateRiskVisuals(risk, score, confidence) {
   }
 
   const heroRisk = document.getElementById("hero-risk");
+  const heroStatusDot = document.getElementById("hero-status-dot");
   const floatingRisk = document.getElementById("floating-risk");
   const floatingConfidence = document.getElementById("floating-confidence");
   const locationStatus = document.getElementById("location-status");
 
   if (heroRisk) heroRisk.textContent = risk;
+  if (heroStatusDot) {
+    heroStatusDot.style.background = riskColor;
+    heroStatusDot.style.boxShadow = `0 0 0 8px ${riskColor}26`;
+  }
   if (floatingRisk) {
     floatingRisk.textContent = risk;
     floatingRisk.style.color = riskColor;
@@ -267,6 +270,8 @@ function renderPrediction(result) {
   const recEl = document.getElementById("recommendation");
   const reasonsEl = document.getElementById("prediction-reasons");
 
+  setRiskBadge(risk, "prediction-risk-badge");
+
   if (scoreEl) scoreEl.textContent = String(score);
   if (confEl) confEl.textContent = `${Number(confidence).toFixed(1)}%`;
 
@@ -281,8 +286,6 @@ function renderPrediction(result) {
   if (reasonsEl && Array.isArray(result.reasons)) {
     reasonsEl.innerHTML = result.reasons.map((item) => `<li>${item}</li>`).join("");
   }
-
-  updateRiskVisuals(risk, score, confidence);
 }
 
 function renderCurrentSensorInfo(sensorData) {
@@ -664,6 +667,13 @@ function renderCharts() {
   }
 }
 
+function formatTimeSafe(dateVal) {
+  if (!dateVal) return "--";
+  const str = String(dateVal).replace(" ", "T");
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? String(dateVal) : d.toLocaleString();
+}
+
 function getDefaultAlerts() {
   const now = new Date();
   const generateTime = (minutesAgo) => new Date(now.getTime() - minutesAgo * 60000).toISOString();
@@ -733,7 +743,7 @@ async function renderAlerts() {
 
     return `
       <tr>
-        <td>${new Date(alert.timestamp).toLocaleString()}</td>
+        <td>${formatTimeSafe(alert.timestamp)}</td>
         <td>${alert.location || "Site A, Karnataka"}</td>
         <td><span class="alert-tag ${risk.toLowerCase()}">${risk}</span></td>
         <td>${alert.cause || "Environmental risk trigger"}</td>

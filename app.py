@@ -1,4 +1,5 @@
 import os
+os.environ["FLASK_SKIP_DOTENV"] = "1"
 import random
 import sqlite3
 from datetime import datetime
@@ -7,7 +8,10 @@ import joblib
 import numpy as np
 import pandas as pd
 from flask import Flask, jsonify, render_template, request, send_from_directory
-from flask_cors import CORS
+try:
+    from flask_cors import CORS
+except ImportError:
+    CORS = None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -24,7 +28,8 @@ app = Flask(
 )
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
-CORS(app)
+if CORS:
+    CORS(app)
 
 # -----------------------------------------
 # ML Model Loading
@@ -43,7 +48,17 @@ if os.path.exists(MODEL_PATH):
     except Exception as exc:
         print(f"Warning: Failed to load model from {MODEL_PATH}: {exc}")
 
-DATABASE = os.path.join(BASE_DIR, "landslide.db")
+if os.environ.get("VERCEL"):
+    DATABASE = "/tmp/landslide.db"
+    ORIGINAL_DB = os.path.join(BASE_DIR, "landslide.db")
+    if not os.path.exists(DATABASE) and os.path.exists(ORIGINAL_DB):
+        try:
+            import shutil
+            shutil.copy2(ORIGINAL_DB, DATABASE)
+        except Exception:
+            pass
+else:
+    DATABASE = os.path.join(BASE_DIR, "landslide.db")
 
 # -----------------------------------------
 # Risk Names Mapping
@@ -68,7 +83,10 @@ def get_db():
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
     except Exception:
-        pass
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE;")
+        except Exception:
+            pass
     return conn
 
 
@@ -620,9 +638,22 @@ create_database()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"Starting LandslideAI server on http://127.0.0.1:{port}/")
-    app.run(
-        host="0.0.0.0",
-        port=port,
-        debug=False,
-    )
+    print(f"Starting LandslideAI server on http://localhost:{port}/ and http://127.0.0.1:{port}/")
+    try:
+        import socket
+        from werkzeug.serving import make_server
+
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        sock.bind(("::", port))
+        sock.listen(128)
+
+        server = make_server("::", port, app, fd=sock.fileno(), threaded=True)
+        server.serve_forever()
+    except Exception as exc:
+        app.run(
+            host="0.0.0.0",
+            port=port,
+            debug=False,
+            load_dotenv=False,
+        )

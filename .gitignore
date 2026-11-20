@@ -23,3 +23,9 @@ model/*.pk1
 
 # VSCode
 .vscode/
+
+# Vercel cache
+.vercel/
+
+# Local extracted folder
+my-LandslideAI-main/
