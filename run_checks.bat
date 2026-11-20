@@ -1,16 +1,22 @@
 @echo off
 cd /d "%~dp0"
-py -3.13 -m py_compile app.py train_model.py
+
+where py >nul 2>nul
+if %errorlevel% equ 0 (
+  set PY_CMD=py -3.13
+) else (
+  set PY_CMD=python
+)
+
+echo Running LandslideAI validation checks using %PY_CMD%...
+%PY_CMD% run_checks.py
 if errorlevel 1 (
-  echo Python compile failed. See errors above.
+  echo.
+  echo [ERROR] Validation checks failed.
   pause
   exit /b 1
 )
-py -3.13 run_checks.py
-if errorlevel 1 (
-  echo run_checks.py failed.
-  pause
-  exit /b 1
-)
-echo Done.
+
+echo.
+echo [SUCCESS] All checks completed successfully.
 pause

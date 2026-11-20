@@ -1,17 +1,39 @@
+/**
+ * LandslideAI - Frontend Dashboard Application
+ * Connects with Flask backend API for ML predictions, live telemetry, and historical analytics.
+ * Includes client-side fallbacks for standalone preview.
+ */
+
 const riskLevels = {
-  LOW: { score: 18, color: "#28b463", recommendation: "Continue routine monitoring and inspect drainage after the next weather cycle." },
-  MEDIUM: { score: 42, color: "#f4b740", recommendation: "Increase inspection frequency and verify local drainage and slope movement indicators." },
-  HIGH: { score: 68, color: "#f2994a", recommendation: "Restrict access to vulnerable zones, notify local authorities, and prepare emergency response measures." },
-  CRITICAL: { score: 90, color: "#eb5757", recommendation: "Immediately warn nearby residents, trigger evacuation instructions if directed by authorities, and prioritize emergency inspection." },
+  LOW: {
+    score: 18,
+    color: "#28b463",
+    recommendation: "Continue routine monitoring and inspect drainage after the next weather cycle.",
+  },
+  MEDIUM: {
+    score: 42,
+    color: "#f4b740",
+    recommendation: "Increase inspection frequency and verify local drainage and slope movement indicators.",
+  },
+  HIGH: {
+    score: 68,
+    color: "#f2994a",
+    recommendation: "Restrict access to vulnerable zones, notify local authorities, and prepare emergency response measures.",
+  },
+  CRITICAL: {
+    score: 90,
+    color: "#eb5757",
+    recommendation: "Immediately warn nearby residents, trigger evacuation instructions if directed by authorities, and prioritize emergency inspection.",
+  },
 };
 
 const defaultSensorState = {
-  rainfall: 62,
-  soil_moisture: 64,
+  rainfall: 62.0,
+  soil_moisture: 64.0,
   tilt: 4.5,
-  vibration: 41,
+  vibration: 41.0,
   temperature: 26.8,
-  humidity: 78,
+  humidity: 78.0,
 };
 
 const state = {
@@ -25,7 +47,7 @@ const state = {
   charts: {},
 };
 
-const MAX_HISTORY_POINTS = 90;
+const MAX_HISTORY_POINTS = 96;
 const STORAGE_KEY = "landslide-ai-alerts";
 
 function clamp(value, min, max) {
@@ -69,6 +91,9 @@ function buildRecommendation(risk) {
   return riskLevels[risk]?.recommendation || riskLevels.LOW.recommendation;
 }
 
+/**
+ * Local fallback physics & rule evaluator if server is offline
+ */
 function evaluatePrediction(payload) {
   const rainfall = Number(payload.rainfall) || 0;
   const soil_moisture = Number(payload.soil_moisture) || 0;
@@ -79,110 +104,77 @@ function evaluatePrediction(payload) {
 
   let score = 0;
   const reasons = [];
-  let risk = "LOW";
 
   if (rainfall > 70) {
-    score += 24;
-    reasons.push("High rainfall and unstable drainage conditions.");
+    score += 26;
+    reasons.push("High rainfall (>70 mm/hr) increases slope runoff and destabilizes topsoil.");
   } else if (rainfall > 40) {
-    score += 12;
+    score += 14;
+    reasons.push("Moderate to high rainfall elevating ground saturation.");
   }
 
   if (soil_moisture > 70) {
     score += 26;
-    reasons.push("High soil moisture increases pore-water pressure.");
+    reasons.push("High soil moisture (>70%) significantly increases pore-water pressure.");
   } else if (soil_moisture > 50) {
-    score += 12;
+    score += 14;
+    reasons.push("Elevated soil moisture reducing shear resistance.");
   }
 
   if (tilt > 5.5) {
-    score += 20;
-    reasons.push("Slope tilt is rising toward a critical threshold.");
+    score += 22;
+    reasons.push("Slope tilt angle (>5.5°) rising toward critical instability threshold.");
   } else if (tilt > 3.5) {
-    score += 10;
+    score += 12;
+    reasons.push("Noticeable slope inclination shift detected by accelerometer.");
   }
 
-  if (vibration > 55) {
-    score += 18;
-    reasons.push("Vibration indicates increased ground movement activity.");
-  } else if (vibration > 30) {
-    score += 8;
+  if (vibration > 50) {
+    score += 20;
+    reasons.push("Vibration sensor detected severe seismic/ground motion activity.");
+  } else if (vibration > 25) {
+    score += 10;
+    reasons.push("Ground vibrations indicate minor sub-surface shifting.");
   }
 
   if (temperature > 30 || humidity > 85) {
-    score += 10;
-    reasons.push("Warm, saturated conditions reduce soil stability.");
+    score += 8;
+    reasons.push("Warm, saturated atmospheric conditions accelerate slope weathering.");
   }
 
+  let risk = "LOW";
   if (score >= 75) {
     risk = "CRITICAL";
   } else if (score >= 55) {
     risk = "HIGH";
   } else if (score >= 30) {
     risk = "MEDIUM";
-  } else {
-    risk = "LOW";
   }
 
-  let confidence = clamp(62 + score * 0.4, 55, 98);
-  confidence = Number(confidence.toFixed(1));
-
-  const raw = {
-    LOW: 1.0,
-    MEDIUM: 1.2,
-    HIGH: 1.7,
-    CRITICAL: 2.2,
-  };
+  const finalScore = clamp(Math.round(score * 1.1 + 12), 5, 100);
+  const confidence = clamp(68 + finalScore * 0.28, 60, 96);
 
   const probabilities = {
-    LOW: 0,
-    MEDIUM: 0,
-    HIGH: 0,
-    CRITICAL: 0,
+    LOW: Math.max(0, 100 - finalScore),
+    MEDIUM: Math.max(0, Math.min(finalScore, 100 - Math.abs(finalScore - 40))),
+    HIGH: Math.max(0, Math.min(finalScore, 100 - Math.abs(finalScore - 65))),
+    CRITICAL: Math.max(0, Math.round(Math.max(0, finalScore - 55) * 1.6)),
   };
 
-  const riskWeights = {
-    LOW: 100 - score,
-    MEDIUM: Math.max(18, 70 - score / 2),
-    HIGH: Math.max(10, score / 2),
-    CRITICAL: Math.max(8, score / 1.6),
-  };
-
-  const normalized = Object.values(riskWeights).reduce((sum, value) => sum + value, 0) || 1;
-
-  probabilities.LOW = Number(((riskWeights.LOW / normalized) * 100).toFixed(1));
-  probabilities.MEDIUM = Number(((riskWeights.MEDIUM / normalized) * 100).toFixed(1));
-  probabilities.HIGH = Number(((riskWeights.HIGH / normalized) * 100).toFixed(1));
-  probabilities.CRITICAL = Number(((riskWeights.CRITICAL / normalized) * 100).toFixed(1));
-
-  if (risk === "LOW") {
-    probabilities.LOW = Math.max(55, probabilities.LOW);
-  }
-  if (risk === "MEDIUM") {
-    probabilities.MEDIUM = Math.max(40, probabilities.MEDIUM);
-  }
-  if (risk === "HIGH") {
-    probabilities.HIGH = Math.max(42, probabilities.HIGH);
-  }
-  if (risk === "CRITICAL") {
-    probabilities.CRITICAL = Math.max(45, probabilities.CRITICAL);
-  }
-
-  const total = Object.values(probabilities).reduce((sum, value) => sum + value, 0) || 1;
-  Object.keys(probabilities).forEach((key) => {
-    probabilities[key] = Number(((probabilities[key] / total) * 100).toFixed(1));
+  const total = Object.values(probabilities).reduce((sum, v) => sum + v, 0) || 1;
+  Object.keys(probabilities).forEach((k) => {
+    probabilities[k] = Number(((probabilities[k] / total) * 100).toFixed(1));
   });
 
-  const finalRisk = risk;
-  const recommendation = buildRecommendation(finalRisk);
-
   return {
-    risk: finalRisk,
-    score: clamp(Math.round(score * 1.2 + 18), 0, 100),
-    confidence,
+    risk,
+    risk_level: risk,
+    score: finalScore,
+    risk_score: finalScore,
+    confidence: Number(confidence.toFixed(1)),
     probabilities,
     reasons: reasons.length ? reasons : ["Weather, moisture, and slope behavior remain within a stable range."],
-    recommendation,
+    recommendation: buildRecommendation(risk),
   };
 }
 
@@ -198,9 +190,10 @@ function validatePredictionInputs() {
 
   for (const field of fields) {
     const input = document.getElementById(field.id);
+    if (!input) continue;
     const value = Number(input.value);
 
-    if (!input.value || Number.isNaN(value) || value < field.min || value > field.max) {
+    if (input.value === "" || Number.isNaN(value) || value < field.min || value > field.max) {
       input.focus();
       input.reportValidity();
       return null;
@@ -223,19 +216,16 @@ function updateRiskVisuals(risk, score, confidence) {
   const predictionBadge = document.getElementById("prediction-risk-badge");
   const riskMeter = document.getElementById("risk-meter");
 
-  if (riskBadge) {
-    setRiskBadge(risk, "risk-badge");
-  }
-  if (predictionBadge) {
-    setRiskBadge(risk, "prediction-risk-badge");
-  }
+  if (riskBadge) setRiskBadge(risk, "risk-badge");
+  if (predictionBadge) setRiskBadge(risk, "prediction-risk-badge");
 
   const riskValue = document.getElementById("risk-score");
   const currentConfidence = document.getElementById("confidence");
   if (riskValue) riskValue.textContent = String(score);
-  if (currentConfidence) currentConfidence.textContent = `${confidence.toFixed(1)}%`;
+  if (currentConfidence) currentConfidence.textContent = `${Number(confidence).toFixed(1)}%`;
+
   if (riskMeter) {
-    riskMeter.style.width = `${Math.max(score, 4)}%`;
+    riskMeter.style.width = `${Math.max(score, 6)}%`;
     riskMeter.style.background = `linear-gradient(90deg, ${riskColor}, ${riskColor})`;
   }
 
@@ -249,37 +239,48 @@ function updateRiskVisuals(risk, score, confidence) {
     floatingRisk.textContent = risk;
     floatingRisk.style.color = riskColor;
   }
-  if (floatingConfidence) floatingConfidence.textContent = `${confidence.toFixed(1)}% confidence`;
+  if (floatingConfidence) floatingConfidence.textContent = `${Number(confidence).toFixed(1)}% confidence`;
   if (locationStatus) {
     locationStatus.textContent = `${risk.toLowerCase()} risk`;
     locationStatus.style.color = riskColor;
   }
 
   if (state.marker) {
-    const colorMap = {
-      LOW: "#28b463",
-      MEDIUM: "#f4b740",
-      HIGH: "#f2994a",
-      CRITICAL: "#eb5757",
-    };
-    state.marker.setStyle({ fillColor: colorMap[risk], color: "#ffffff" });
-    state.marker.bindPopup(`<strong>Site A</strong><br>${risk} risk<br>Confidence: ${confidence.toFixed(1)}%`);
+    state.marker.setStyle({ fillColor: riskColor, color: "#ffffff" });
+    state.marker.bindPopup(
+      `<strong>Western Ghats Slope A</strong><br><strong>Status:</strong> ${risk} risk<br><strong>Confidence:</strong> ${Number(confidence).toFixed(1)}%`
+    );
   }
 }
 
 function renderPrediction(result) {
-  const risk = result.risk;
-  const score = result.score;
-  const confidence = result.confidence;
+  const risk = result.risk || result.risk_level || "LOW";
+  const score = result.score !== undefined ? result.score : (result.risk_score || 25);
+  const confidence = result.confidence || 85.0;
 
-  document.getElementById("prediction-score").textContent = String(score);
-  document.getElementById("prediction-confidence").textContent = `${confidence.toFixed(1)}%`;
-  document.getElementById("low").textContent = `${result.probabilities.LOW}%`;
-  document.getElementById("medium").textContent = `${result.probabilities.MEDIUM}%`;
-  document.getElementById("high").textContent = `${result.probabilities.HIGH}%`;
-  document.getElementById("critical").textContent = `${result.probabilities.CRITICAL}%`;
-  document.getElementById("recommendation").textContent = result.recommendation;
-  document.getElementById("prediction-reasons").innerHTML = result.reasons.map((item) => `<li>${item}</li>`).join("");
+  const scoreEl = document.getElementById("prediction-score");
+  const confEl = document.getElementById("prediction-confidence");
+  const lowEl = document.getElementById("low");
+  const medEl = document.getElementById("medium");
+  const highEl = document.getElementById("high");
+  const critEl = document.getElementById("critical");
+  const recEl = document.getElementById("recommendation");
+  const reasonsEl = document.getElementById("prediction-reasons");
+
+  if (scoreEl) scoreEl.textContent = String(score);
+  if (confEl) confEl.textContent = `${Number(confidence).toFixed(1)}%`;
+
+  const probs = result.probabilities || { LOW: 85, MEDIUM: 10, HIGH: 5, CRITICAL: 0 };
+  if (lowEl) lowEl.textContent = `${probs.LOW || 0}%`;
+  if (medEl) medEl.textContent = `${probs.MEDIUM || 0}%`;
+  if (highEl) highEl.textContent = `${probs.HIGH || 0}%`;
+  if (critEl) critEl.textContent = `${probs.CRITICAL || 0}%`;
+
+  if (recEl) recEl.textContent = result.recommendation || buildRecommendation(risk);
+
+  if (reasonsEl && Array.isArray(result.reasons)) {
+    reasonsEl.innerHTML = result.reasons.map((item) => `<li>${item}</li>`).join("");
+  }
 
   updateRiskVisuals(risk, score, confidence);
 }
@@ -309,33 +310,31 @@ function renderCurrentSensorInfo(sensorData) {
     }
   });
 
-  const riskResult = evaluatePrediction(sensorData);
-  const score = riskResult.score;
-  const confidence = riskResult.confidence;
-  const risk = riskResult.risk;
+  const risk = sensorData.risk || sensorData.risk_level || "LOW";
+  const score = sensorData.risk_score !== undefined ? sensorData.risk_score : (sensorData.score || 25);
+  const confidence = sensorData.confidence || 85.0;
 
-  document.getElementById("confidence").textContent = `${confidence.toFixed(1)}%`;
-  document.getElementById("risk-score").textContent = String(score);
-  document.getElementById("latest-time").textContent = formatTime(new Date());
-  document.getElementById("last-sensor-update").textContent = formatTime(new Date());
-  document.getElementById("hero-last-updated").textContent = formatTime(new Date());
-  document.getElementById("last-updated").textContent = `Last updated: ${formatTime(new Date())}`;
+  const nowFormatted = formatTime(new Date());
+  const latestTime = document.getElementById("latest-time");
+  const lastSensor = document.getElementById("last-sensor-update");
+  const heroUpdated = document.getElementById("hero-last-updated");
+  const lastUpdated = document.getElementById("last-updated");
 
-  setRiskBadge(risk, "risk-badge");
+  if (latestTime) latestTime.textContent = nowFormatted;
+  if (lastSensor) lastSensor.textContent = nowFormatted;
+  if (heroUpdated) heroUpdated.textContent = nowFormatted;
+  if (lastUpdated) lastUpdated.textContent = `Last updated: ${nowFormatted}`;
+
   updateRiskVisuals(risk, score, confidence);
 
-  if (document.getElementById("prediction-risk-badge").textContent === "--") {
-    document.getElementById("prediction-risk-badge").textContent = risk;
-  }
-
   addHistoryPoint({
-    timestamp: new Date().toISOString(),
-    rainfall: sensorData.rainfall,
-    soil_moisture: sensorData.soil_moisture,
-    tilt: sensorData.tilt,
-    vibration: sensorData.vibration,
-    temperature: sensorData.temperature,
-    humidity: sensorData.humidity,
+    timestamp: sensorData.timestamp || new Date().toISOString(),
+    rainfall: Number(sensorData.rainfall),
+    soil_moisture: Number(sensorData.soil_moisture),
+    tilt: Number(sensorData.tilt),
+    vibration: Number(sensorData.vibration),
+    temperature: Number(sensorData.temperature),
+    humidity: Number(sensorData.humidity),
     risk,
     score,
   });
@@ -343,14 +342,56 @@ function renderCurrentSensorInfo(sensorData) {
   renderCharts();
 }
 
-function simulateSensorData() {
-  const now = new Date();
-  const nextRain = clamp(defaultSensorState.rainfall + (Math.random() - 0.5) * 24, 12, 145);
-  const nextMoisture = clamp(defaultSensorState.soil_moisture + (Math.random() - 0.38) * 26, 18, 96);
-  const nextTilt = clamp(defaultSensorState.tilt + (Math.random() - 0.45) * 2.4, 0.8, 14.5);
-  const nextVibration = clamp(defaultSensorState.vibration + (Math.random() - 0.45) * 24, 8, 100);
-  const nextTemp = clamp(defaultSensorState.temperature + (Math.random() - 0.5) * 4, 18, 38);
-  const nextHumidity = clamp(defaultSensorState.humidity + (Math.random() - 0.4) * 18, 36, 98);
+async function simulateSensorData() {
+  try {
+    const response = await fetch("/api/sensor-data");
+    if (response.ok) {
+      const data = await response.json();
+      state.currentSensor = {
+        rainfall: Number(data.rainfall),
+        soil_moisture: Number(data.soil_moisture),
+        tilt: Number(data.tilt),
+        vibration: Number(data.vibration),
+        temperature: Number(data.temperature),
+        humidity: Number(data.humidity),
+        risk: data.risk_level || data.risk,
+        risk_score: data.risk_score,
+        confidence: data.confidence,
+        timestamp: data.timestamp,
+      };
+
+      if (data.battery !== undefined) {
+        const batEl = document.getElementById("battery-level");
+        if (batEl) batEl.textContent = `${data.battery}%`;
+      }
+      if (data.signal_strength !== undefined) {
+        const sigEl = document.getElementById("signal-strength");
+        if (sigEl) sigEl.textContent = `${data.signal_strength} dBm`;
+      }
+      if (data.device_status !== undefined) {
+        const devEl = document.getElementById("device-status");
+        if (devEl) devEl.textContent = data.device_status;
+      }
+      if (data.network !== undefined) {
+        const netEl = document.getElementById("network-status");
+        if (netEl) netEl.textContent = data.network;
+      }
+
+      renderCurrentSensorInfo(state.currentSensor);
+      renderAlerts();
+      return;
+    }
+  } catch (error) {
+    // Backend offline: run client-side simulation fallback
+  }
+
+  // Client-side simulation fallback
+  const nextRain = clamp(defaultSensorState.rainfall + (Math.random() - 0.48) * 20, 8, 140);
+  const nextMoisture = clamp(defaultSensorState.soil_moisture + (Math.random() - 0.42) * 22, 18, 95);
+  const nextTilt = clamp(defaultSensorState.tilt + (Math.random() - 0.45) * 2.2, 0.8, 14.0);
+  const nextVibration = clamp(defaultSensorState.vibration + (Math.random() - 0.45) * 22, 5, 95);
+  const nextTemp = clamp(defaultSensorState.temperature + (Math.random() - 0.5) * 3, 18, 36);
+  const nextHumidity = clamp(defaultSensorState.humidity + (Math.random() - 0.4) * 16, 40, 96);
 
   state.currentSensor = {
     rainfall: Number(nextRain.toFixed(1)),
@@ -360,6 +401,11 @@ function simulateSensorData() {
     temperature: Number(nextTemp.toFixed(1)),
     humidity: Number(nextHumidity.toFixed(1)),
   };
+
+  const evaluated = evaluatePrediction(state.currentSensor);
+  state.currentSensor.risk = evaluated.risk;
+  state.currentSensor.risk_score = evaluated.score;
+  state.currentSensor.confidence = evaluated.confidence;
 
   defaultSensorState.rainfall = state.currentSensor.rainfall;
   defaultSensorState.soil_moisture = state.currentSensor.soil_moisture;
@@ -371,14 +417,6 @@ function simulateSensorData() {
   renderCurrentSensorInfo(state.currentSensor);
   renderSensorHealth();
   renderAlerts();
-  updateMapRisk();
-
-  if (state.mode === "demo") {
-    document.getElementById("device-status").textContent = "Online";
-    document.getElementById("network-status").textContent = "Connected";
-    document.getElementById("battery-level").textContent = `${Math.max(62, 95 - now.getMinutes() * 0.2).toFixed(0)}%`;
-    document.getElementById("signal-strength").textContent = `${Math.max(35, 80 + Math.random() * 20).toFixed(0)} dBm`;
-  }
 }
 
 function renderSensorHealth() {
@@ -387,10 +425,10 @@ function renderSensorHealth() {
   const signalStrength = document.getElementById("signal-strength");
   const networkStatus = document.getElementById("network-status");
 
-  if (deviceStatus) deviceStatus.textContent = state.mode === "live" ? "Online" : "Demo node";
-  if (batteryLevel) batteryLevel.textContent = state.mode === "demo" ? "92%" : "89%";
-  if (signalStrength) signalStrength.textContent = state.mode === "demo" ? "78 dBm" : "74 dBm";
-  if (networkStatus) networkStatus.textContent = state.mode === "demo" ? "Connected" : "Live feed";
+  if (deviceStatus) deviceStatus.textContent = state.mode === "live" ? "Online" : "Demo Simulation";
+  if (batteryLevel) batteryLevel.textContent = state.mode === "demo" ? "94%" : "89%";
+  if (signalStrength) signalStrength.textContent = state.mode === "demo" ? "82 dBm" : "76 dBm";
+  if (networkStatus) networkStatus.textContent = state.mode === "demo" ? "Connected" : "Live IoT Feed";
 }
 
 async function switchMode(mode) {
@@ -405,27 +443,29 @@ async function switchMode(mode) {
   if (mode === "live") {
     try {
       const response = await fetch("/api/latest");
-      if (!response.ok) throw new Error("Live API not available");
-      const data = await response.json();
-      if (!data.message) {
-        state.currentSensor = {
-          rainfall: Number(data.rainfall),
-          soil_moisture: Number(data.soil_moisture),
-          tilt: Number(data.tilt),
-          vibration: Number(data.vibration),
-          temperature: Number(data.temperature),
-          humidity: Number(data.humidity),
-        };
-        renderCurrentSensorInfo(state.currentSensor);
-        renderAlerts();
+      if (response.ok) {
+        const data = await response.json();
+        if (!data.message && data.rainfall !== undefined) {
+          state.currentSensor = {
+            rainfall: Number(data.rainfall),
+            soil_moisture: Number(data.soil_moisture),
+            tilt: Number(data.tilt),
+            vibration: Number(data.vibration),
+            temperature: Number(data.temperature),
+            humidity: Number(data.humidity),
+            risk: data.risk_level || data.risk,
+            risk_score: data.risk_score,
+            confidence: data.confidence,
+          };
+          renderCurrentSensorInfo(state.currentSensor);
+          renderAlerts();
+        }
       }
     } catch (error) {
-      console.warn("Using demo data fallback because live API is unavailable.");
-      renderCurrentSensorInfo(state.currentSensor);
+      console.warn("Live API unavailable, continuing with cached readings.");
     }
   } else {
-    renderCurrentSensorInfo(state.currentSensor);
-    renderAlerts();
+    simulateSensorData();
   }
 
   renderSensorHealth();
@@ -439,123 +479,189 @@ function addHistoryPoint(point) {
 }
 
 function getRangeWindow() {
-  if (state.activeRange === "30d") return 30 * 24;
-  if (state.activeRange === "7d") return 7 * 24;
+  if (state.activeRange === "30d") return 72;
+  if (state.activeRange === "7d") return 48;
   return 24;
 }
 
 function formatChartLabel(dateString) {
   const date = new Date(dateString);
+  if (isNaN(date.getTime())) {
+    return String(dateString).slice(-8);
+  }
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function syncBackendHistory() {
+  try {
+    const response = await fetch("/api/history");
+    if (response.ok) {
+      const historyData = await response.json();
+      if (Array.isArray(historyData) && historyData.length) {
+        state.history = historyData.map((entry) => ({
+          timestamp: entry.timestamp,
+          rainfall: Number(entry.rainfall),
+          soil_moisture: Number(entry.soil_moisture),
+          tilt: Number(entry.tilt),
+          vibration: Number(entry.vibration),
+          temperature: Number(entry.temperature),
+          humidity: Number(entry.humidity),
+          risk: entry.risk_level || entry.risk,
+          score: entry.risk_score || 25,
+        }));
+        renderCharts();
+        return;
+      }
+    }
+  } catch (error) {
+    // Continue with existing state.history
+  }
 }
 
 function renderCharts() {
   if (!state.history.length) {
     const now = Date.now();
-    state.history = Array.from({ length: 48 }, (_, index) => {
-      const time = new Date(now - (47 - index) * 60 * 60 * 1000);
-      const riskResult = evaluatePrediction({
-        rainfall: 50 + Math.random() * 30,
-        soil_moisture: 50 + Math.random() * 25,
-        tilt: 3 + Math.random() * 4,
-        vibration: 20 + Math.random() * 40,
-        temperature: 24 + Math.random() * 6,
-        humidity: 60 + Math.random() * 25,
-      });
+    state.history = Array.from({ length: 24 }, (_, index) => {
+      const time = new Date(now - (23 - index) * 60 * 60 * 1000);
+      const fakeSensor = {
+        rainfall: Number((30 + Math.random() * 45).toFixed(1)),
+        soil_moisture: Number((40 + Math.random() * 35).toFixed(1)),
+        tilt: Number((2.5 + Math.random() * 3.5).toFixed(1)),
+        vibration: Number((15 + Math.random() * 35).toFixed(1)),
+        temperature: Number((23 + Math.random() * 6).toFixed(1)),
+        humidity: Number((60 + Math.random() * 25).toFixed(1)),
+      };
+      const evalRes = evaluatePrediction(fakeSensor);
       return {
         timestamp: time.toISOString(),
-        rainfall: Number((50 + Math.random() * 30).toFixed(1)),
-        soil_moisture: Number((50 + Math.random() * 25).toFixed(1)),
-        tilt: Number((3 + Math.random() * 4).toFixed(1)),
-        vibration: Number((20 + Math.random() * 40).toFixed(1)),
-        temperature: Number((24 + Math.random() * 6).toFixed(1)),
-        humidity: Number((60 + Math.random() * 25).toFixed(1)),
-        risk: riskResult.risk,
-        score: riskResult.score,
+        ...fakeSensor,
+        risk: evalRes.risk,
+        score: evalRes.score,
       };
     });
   }
 
-  const toLabel = (index, arr) => formatChartLabel(arr[index].timestamp);
   const selected = state.history.slice(-getRangeWindow());
-
+  const labels = selected.map((entry) => formatChartLabel(entry.timestamp));
   const rainfall = selected.map((entry) => entry.rainfall);
   const moisture = selected.map((entry) => entry.soil_moisture);
   const tilt = selected.map((entry) => entry.tilt);
-  const riskScoreValues = selected.map((entry) => entry.score);
-  const labels = selected.map((entry) => toLabel(selected.indexOf(entry), selected));
+  const vibration = selected.map((entry) => entry.vibration);
+  const riskScores = selected.map((entry) => entry.score);
 
-  const chartConfig = (canvasId, label, data, type = "line") => ({
-    type,
-    data: {
-      labels,
-      datasets: [{
-        label,
-        data,
-        borderColor: "#2f80ed",
-        backgroundColor: "rgba(47, 128, 237, 0.18)",
-        borderWidth: 3,
-        tension: 0.35,
-        fill: true,
-      }],
+  const rainCanvas = document.getElementById("rainChart");
+  const moistureCanvas = document.getElementById("moistureChart");
+  const tiltCanvas = document.getElementById("tiltChart");
+  const riskCanvas = document.getElementById("riskChart");
+
+  const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: true } },
+    scales: {
+      x: { ticks: { maxTicksLimit: 7 } },
+      y: { beginAtZero: false },
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: true } },
-      scales: {
-        x: { ticks: { maxTicksLimit: 8 } },
-        y: { beginAtZero: false },
+  };
+
+  if (rainCanvas) {
+    if (state.charts.rain) state.charts.rain.destroy();
+    state.charts.rain = new Chart(rainCanvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "Rainfall (mm/hr)",
+          data: rainfall,
+          borderColor: "#2f80ed",
+          backgroundColor: "rgba(47, 128, 237, 0.16)",
+          borderWidth: 2.5,
+          tension: 0.35,
+          fill: true,
+        }],
       },
-    },
-  });
+      options: commonOptions,
+    });
+  }
 
-  if (state.charts.rain) state.charts.rain.destroy();
-  state.charts.rain = new Chart(document.getElementById("rainChart"), chartConfig("rainChart", "Rainfall (mm/hr)", rainfall));
+  if (moistureCanvas) {
+    if (state.charts.moisture) state.charts.moisture.destroy();
+    state.charts.moisture = new Chart(moistureCanvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "Soil moisture (%)",
+          data: moisture,
+          borderColor: "#28b463",
+          backgroundColor: "rgba(40, 180, 99, 0.16)",
+          borderWidth: 2.5,
+          tension: 0.35,
+          fill: true,
+        }],
+      },
+      options: commonOptions,
+    });
+  }
 
-  if (state.charts.moisture) state.charts.moisture.destroy();
-  state.charts.moisture = new Chart(document.getElementById("moistureChart"), chartConfig("moistureChart", "Soil moisture (%)", moisture));
+  if (tiltCanvas) {
+    if (state.charts.tilt) state.charts.tilt.destroy();
+    state.charts.tilt = new Chart(tiltCanvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Tilt angle (°)",
+            data: tilt,
+            borderColor: "#f4b740",
+            backgroundColor: "rgba(244, 183, 64, 0.16)",
+            borderWidth: 2.5,
+            tension: 0.35,
+            fill: true,
+          },
+          {
+            label: "Vibration",
+            data: vibration,
+            borderColor: "#eb5757",
+            backgroundColor: "rgba(235, 87, 87, 0.12)",
+            borderWidth: 2,
+            tension: 0.35,
+            fill: false,
+          },
+        ],
+      },
+      options: commonOptions,
+    });
+  }
 
-  if (state.charts.tilt) state.charts.tilt.destroy();
-  state.charts.tilt = new Chart(document.getElementById("tiltChart"), {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Tilt angle (°)", data: tilt, borderColor: "#f4b740", backgroundColor: "rgba(244, 183, 64, 0.18)", borderWidth: 3, tension: 0.35, fill: true },
-        { label: "Vibration (m/s²)", data: selected.map((entry) => entry.vibration), borderColor: "#eb5757", backgroundColor: "rgba(235, 87, 87, 0.12)", borderWidth: 2, tension: 0.35, fill: false },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { beginAtZero: false } },
-    },
-  });
-
-  if (state.charts.risk) state.charts.risk.destroy();
-  state.charts.risk = new Chart(document.getElementById("riskChart"), {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [{
-        label: "Risk score",
-        data: riskScoreValues,
-        backgroundColor: riskScoreValues.map((value) => {
-          if (value >= 75) return "rgba(235, 87, 87, 0.8)";
-          if (value >= 50) return "rgba(242, 153, 74, 0.8)";
-          if (value >= 30) return "rgba(244, 183, 64, 0.8)";
-          return "rgba(40, 180, 99, 0.8)";
-        }),
-        borderRadius: 8,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { beginAtZero: true, max: 100 } },
-    },
-  });
+  if (riskCanvas) {
+    if (state.charts.risk) state.charts.risk.destroy();
+    state.charts.risk = new Chart(riskCanvas, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: "Risk score",
+          data: riskScores,
+          backgroundColor: riskScores.map((score) => {
+            if (score >= 75) return "rgba(235, 87, 87, 0.85)";
+            if (score >= 55) return "rgba(242, 153, 74, 0.85)";
+            if (score >= 30) return "rgba(244, 183, 64, 0.85)";
+            return "rgba(40, 180, 99, 0.85)";
+          }),
+          borderRadius: 6,
+        }],
+      },
+      options: {
+        ...commonOptions,
+        scales: {
+          x: { ticks: { maxTicksLimit: 7 } },
+          y: { beginAtZero: true, max: 100 },
+        },
+      },
+    });
+  }
 }
 
 function getDefaultAlerts() {
@@ -563,59 +669,97 @@ function getDefaultAlerts() {
   const generateTime = (minutesAgo) => new Date(now.getTime() - minutesAgo * 60000).toISOString();
 
   return [
-    { id: "alert-1", timestamp: generateTime(12), location: "Site A, Karnataka", risk: "HIGH", cause: "Sustained rainfall, high moisture", status: "Open", acknowledged: false },
-    { id: "alert-2", timestamp: generateTime(48), location: "Site A, Karnataka", risk: "MEDIUM", cause: "Rising tilt angle", status: "Monitoring", acknowledged: true },
-    { id: "alert-3", timestamp: generateTime(100), location: "Site A, Karnataka", risk: "CRITICAL", cause: "Slope vibration spike", status: "Escalated", acknowledged: false },
+    {
+      id: "alert-1",
+      timestamp: generateTime(15),
+      location: "Site A, Karnataka",
+      risk: "HIGH",
+      cause: "Sustained rainfall & moisture threshold reached",
+      status: "Active",
+      acknowledged: false,
+    },
+    {
+      id: "alert-2",
+      timestamp: generateTime(65),
+      location: "Site A, Karnataka",
+      risk: "MEDIUM",
+      cause: "Rising tilt angle detected on lower slope",
+      status: "Monitoring",
+      acknowledged: true,
+    },
   ];
 }
 
-function loadAlertsFromStorage() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) {
-    const seed = getDefaultAlerts();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-    return seed;
-  }
-  try {
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) && parsed.length ? parsed : getDefaultAlerts();
-  } catch (error) {
-    return getDefaultAlerts();
-  }
-}
+async function renderAlerts() {
+  let alerts = [];
 
-function renderAlerts() {
-  state.alerts = loadAlertsFromStorage();
+  try {
+    const response = await fetch("/api/alerts");
+    if (response.ok) {
+      const serverAlerts = await response.json();
+      if (Array.isArray(serverAlerts) && serverAlerts.length) {
+        alerts = serverAlerts;
+      }
+    }
+  } catch (error) {
+    // Offline fallback
+  }
+
+  if (!alerts.length) {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    alerts = stored ? JSON.parse(stored) : getDefaultAlerts();
+  }
+
+  state.alerts = alerts;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(alerts));
+
   const tbody = document.getElementById("alert-table-body");
   const banner = document.getElementById("alert-banner");
   if (!tbody) return;
 
-  const hasHighRisk = state.alerts.some((alert) => ["HIGH", "CRITICAL"].includes(alert.risk) && !alert.acknowledged);
+  const hasHighUnack = state.alerts.some(
+    (a) => ["HIGH", "CRITICAL"].includes(a.risk) && !a.acknowledged
+  );
+
   if (banner) {
-    banner.classList.toggle("hidden", !hasHighRisk);
+    banner.classList.toggle("hidden", !hasHighUnack);
   }
 
   tbody.innerHTML = state.alerts.map((alert) => {
-    const ackClass = alert.acknowledged ? "acknowledged" : "";
-    const statusClass = alert.acknowledged ? "acknowledged" : "";
+    const isAck = Boolean(alert.acknowledged);
+    const ackClass = isAck ? "acknowledged" : "";
+    const risk = alert.risk || "LOW";
+    const alertId = alert.id;
+
     return `
       <tr>
         <td>${new Date(alert.timestamp).toLocaleString()}</td>
-        <td>${alert.location}</td>
-        <td><span class="alert-tag ${alert.risk.toLowerCase()}">${alert.risk}</span></td>
-        <td>${alert.cause}</td>
-        <td><span class="status-badge ${statusClass}">${alert.status}</span></td>
+        <td>${alert.location || "Site A, Karnataka"}</td>
+        <td><span class="alert-tag ${risk.toLowerCase()}">${risk}</span></td>
+        <td>${alert.cause || "Environmental risk trigger"}</td>
+        <td><span class="status-badge ${ackClass}">${isAck ? "Acknowledged" : (alert.status || "Active")}</span></td>
         <td>
-          <button class="action-btn ${ackClass}" type="button" data-alert-id="${alert.id}">${alert.acknowledged ? "Acknowledged" : "Acknowledge"}</button>
+          <button class="action-btn ${ackClass}" type="button" data-alert-id="${alertId}">
+            ${isAck ? "Acknowledged" : "Acknowledge"}
+          </button>
         </td>
       </tr>
     `;
   }).join("");
 
   tbody.querySelectorAll(".action-btn").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const id = button.dataset.alertId;
-      state.alerts = state.alerts.map((alert) => alert.id === id ? { ...alert, acknowledged: true, status: "Acknowledged" } : alert);
+      const numId = id.replace("alert-", "");
+
+      // Try notifying backend
+      try {
+        await fetch(`/api/alerts/${numId}/acknowledge`, { method: "POST" });
+      } catch (err) {}
+
+      state.alerts = state.alerts.map((a) =>
+        a.id === id ? { ...a, acknowledged: true, status: "Acknowledged" } : a
+      );
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state.alerts));
       renderAlerts();
     });
@@ -623,16 +767,16 @@ function renderAlerts() {
 }
 
 function exportAlertsCsv() {
-  const alerts = loadAlertsFromStorage();
+  const alerts = state.alerts.length ? state.alerts : getDefaultAlerts();
   const rows = [
     ["Timestamp", "Location", "Risk", "Cause", "Status", "Acknowledged"],
-    ...alerts.map((alert) => [
-      new Date(alert.timestamp).toISOString(),
-      alert.location,
-      alert.risk,
-      alert.cause,
-      alert.status,
-      String(alert.acknowledged),
+    ...alerts.map((a) => [
+      new Date(a.timestamp).toISOString(),
+      a.location || "Site A, Karnataka",
+      a.risk,
+      a.cause,
+      a.status,
+      String(Boolean(a.acknowledged)),
     ]),
   ];
 
@@ -641,54 +785,78 @@ function exportAlertsCsv() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "landslide-alerts.csv";
+  link.download = "landslide-ai-alerts.csv";
   link.click();
   URL.revokeObjectURL(url);
 }
 
 function setupMap() {
-  if (!document.getElementById("risk-map")) return;
+  const mapElement = document.getElementById("risk-map");
+  if (!mapElement || typeof L === "undefined") return;
 
-  state.map = L.map("risk-map").setView([13.3546, 75.7765], 9);
+  state.map = L.map("risk-map").setView([13.3546, 75.7765], 11);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(state.map);
 
   state.marker = L.circleMarker([13.3546, 75.7765], {
-    radius: 16,
+    radius: 14,
     color: "#ffffff",
     weight: 2,
     fillColor: "#28b463",
     fillOpacity: 0.85,
   }).addTo(state.map);
 
-  state.marker.bindPopup("<strong>Western Ghats Slope A</strong><br>Low risk");
+  state.marker.bindPopup("<strong>Western Ghats Slope A</strong><br>Status: Routine Monitoring");
   state.marker.openPopup();
 }
 
 function updateMapRisk() {
   if (!state.marker) return;
-  const risk = evaluatePrediction(state.currentSensor).risk;
-  const colorMap = {
-    LOW: "#28b463",
-    MEDIUM: "#f4b740",
-    HIGH: "#f2994a",
-    CRITICAL: "#eb5757",
-  };
-  state.marker.setStyle({ fillColor: colorMap[risk], color: "#ffffff" });
-  state.marker.bindPopup(`<strong>Western Ghats Slope A</strong><br>${risk} risk<br>Site status: ${risk.toLowerCase()}`);
+  const risk = state.currentSensor.risk || "LOW";
+  const color = getRiskColor(risk);
+  state.marker.setStyle({ fillColor: color, color: "#ffffff" });
+  state.marker.bindPopup(`<strong>Western Ghats Slope A</strong><br>${risk} risk<br>Status: ${risk.toLowerCase()}`);
 }
 
 function registerEvents() {
-  document.getElementById("prediction-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const payload = validatePredictionInputs();
-    if (!payload) return;
+  const form = document.getElementById("prediction-form");
+  if (form) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = validatePredictionInputs();
+      if (!payload) return;
 
-    const result = evaluatePrediction(payload);
-    renderPrediction(result);
-  });
+      const submitBtn = form.querySelector("button[type='submit']");
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Analyzing...";
+      }
+
+      try {
+        const response = await fetch("/api/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) throw new Error("API call failed");
+
+        const data = await response.json();
+        renderPrediction(data);
+      } catch (error) {
+        console.warn("Prediction API unavailable, using local model simulation:", error);
+        const fallback = evaluatePrediction(payload);
+        renderPrediction(fallback);
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Predict risk";
+        }
+      }
+    });
+  }
 
   document.querySelectorAll(".toggle-btn").forEach((button) => {
     button.addEventListener("click", () => switchMode(button.dataset.mode));
@@ -697,33 +865,35 @@ function registerEvents() {
   document.querySelectorAll(".range-btn").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeRange = button.dataset.range;
-      document.querySelectorAll(".range-btn").forEach((rangeButton) => {
-        rangeButton.classList.toggle("active", rangeButton === button);
-      });
+      document.querySelectorAll(".range-btn").forEach((b) => b.classList.toggle("active", b === button));
       renderCharts();
     });
   });
 
-  document.getElementById("export-alerts").addEventListener("click", exportAlertsCsv);
+  const exportBtn = document.getElementById("export-alerts");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", exportAlertsCsv);
+  }
 }
 
-function initializeDashboard() {
+async function initializeDashboard() {
   if (!document.getElementById("prediction-form")) return;
 
-  renderCurrentSensorInfo(state.currentSensor);
-  renderSensorHealth();
   setupMap();
   registerEvents();
-  renderAlerts();
-  renderCharts();
-  renderCurrentSensorInfo(state.currentSensor);
+  renderSensorHealth();
+  await syncBackendHistory();
+  await renderAlerts();
+  await simulateSensorData();
 
+  // Periodic sensor loop
   setInterval(() => {
     if (state.mode === "demo") {
       simulateSensorData();
+    } else if (state.mode === "live") {
+      switchMode("live");
     }
   }, 5000);
 }
 
 window.addEventListener("DOMContentLoaded", initializeDashboard);
-
