@@ -107,7 +107,7 @@ my-LandslideAI/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/punithkumar0927-ctrl/my-LandslideAI.git
+git clone https://github.com/punithkumarab/my-LandslideAI.git
 cd my-LandslideAI
 ```
 
@@ -226,7 +226,7 @@ SUCCESS: All verification checks passed!
 
 **Punith Kumar AB**  
 B.E. Artificial Intelligence and Machine Learning  
-- GitHub: [@punithkumar0927-ctrl](https://github.com/punithkumar0927-ctrl)  
+- GitHub: [@punithkumarab](https://github.com/punithkumarab)  
 - LinkedIn: [Punith Kumar AB](https://www.linkedin.com/in/punithkumarab)  
 
 ---
